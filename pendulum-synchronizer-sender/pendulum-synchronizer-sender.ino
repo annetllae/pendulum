@@ -13,15 +13,14 @@ Adafruit_MPU6050 mpu;
 
 
 // REPLACE WITH RECEIVER MAC Address
-uint8_t broadcastAddress[] = {0x08, 0x3A, 0x8D, 0xE3, 0x5A, 0x50};
+uint8_t broadcastAddress[] = { 0x08, 0x3A, 0x8D, 0xE3, 0x5A, 0x50 };
 
 // Callback when data is sent
 void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
   Serial.print("Last Packet Send Status: ");
-  if (sendStatus == 0){
+  if (sendStatus == 0) {
     Serial.println("success");
-  }
-  else{
+  } else {
     Serial.println("fail");
   }
 }
@@ -91,7 +90,7 @@ void setup(void) {
       break;
   }
 
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  mpu.setFilterBandwidth(MPU6050_BAND_5_HZ);
   Serial.print("Filter bandwidth set to: ");
   switch (mpu.getFilterBandwidth()) {
     case MPU6050_BAND_260_HZ:
@@ -118,21 +117,26 @@ void setup(void) {
   }
 
   Serial.println("");
+  pinMode(LED_BUILTIN, OUTPUT);
   delay(100);
 }
 
 void loop() {
-
+  digitalWrite(LED_BUILTIN, LOW);
   /* Get new sensor events with the readings */
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
 
-  Serial.print(a.acceleration.x);
-  Serial.print("\t");
-  Serial.print(a.acceleration.y);
-  Serial.print("\t");
-  Serial.println(a.acceleration.z);
-  esp_now_send(broadcastAddress, (uint8_t *) &a.acceleration.x, sizeof(a.acceleration.x));
+  // Serial.print(a.acceleration.x);
+  // Serial.print("\t");
+  // Serial.print(a.acceleration.y);
+  // Serial.print("\t");
+  // Serial.println(a.acceleration.z);
 
-  delay(50);
+  float acc = sqrt(a.acceleration.x * a.acceleration.x + a.acceleration.y * a.acceleration.y + a.acceleration.z * a.acceleration.z);
+
+  esp_now_send(broadcastAddress, (uint8_t *)&acc, sizeof(acc));
+  digitalWrite(LED_BUILTIN, HIGH);
+
+  delay(20);
 }
