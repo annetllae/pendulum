@@ -3,16 +3,25 @@
 #include <AccelStepper.h>
 #include <cmath>
 
-float pAcc = 0;
+float pAcc = 0;  // предыдущее значение ускорения с маятника
 bool grow = false;
 bool pGrow = grow;
 bool detect = false;
 int timespamp = 0;
-float halfPeriod = 0;
+int halfPeriod = 0;
+bool isMovingForward = true;  // Флаг направления
+bool runMotor = false;
+
 
 const int filterSize = 10;
 float filter[filterSize];
-int fi = 0;
+int fi = 0;  // индекс в фильтре
+
+
+const int halfPeriodsSize = 20;
+int halfPeriods[halfPeriodsSize];
+int pi = 0;  // индекс в массиве периодов
+
 const int stepPin = D1;
 const int dirPin = D2;
 
@@ -21,9 +30,28 @@ AccelStepper stepper(1, stepPin, dirPin);
 float getFilteredAcc() {
   float result = 0;
   for (int i = 0; i < filterSize; ++i) {
-    result += filter[i];
+    result = result + filter[i];
   }
   return result / filterSize;
+}
+
+int getGoodHalfPeriod() {
+  int result = 0;
+  for (int i = 0; i < halfPeriodsSize; ++i) {
+    result = result + halfPeriods[i];
+  }
+  result = result / halfPeriodsSize;
+  for (int i = 0; i < halfPeriodsSize; ++i) {
+    if (abs(halfPeriods[i] - result) > (result/50)) {
+      Serial.print("Calc period error: ");
+      Serial.print(abs(halfPeriods[i] - result));
+      Serial.print(" vs ");
+      Serial.println(result/50);
+      return 0;
+    }
+  }
+  
+  return result > 300 ? result : 0;
 }
 
 void ReceiveCallback(u8 *mac_addr, u8 *data, u8 len) {
@@ -35,18 +63,28 @@ void ReceiveCallback(u8 *mac_addr, u8 *data, u8 len) {
   // Serial.print(halfPeriod / 100);
   // Serial.print(", ");
   float fAcc = getFilteredAcc();
-  // Serial.println(fAcc);
+  //Serial.println(fAcc);
   if (fAcc - pAcc > 0) {
     grow = true;
   } else {
     grow = false;
   }
 
-  if (!pGrow && grow) {
-    halfPeriod = millis() - timespamp;
+  if (!pGrow && grow && !runMotor) {
+    // начало колебания
     detect = true;
     digitalWrite(LED_BUILTIN, LOW);
+    halfPeriods[(pi++) % halfPeriodsSize] = millis() - timespamp;
     timespamp = millis();
+    halfPeriod = getGoodHalfPeriod();
+    if (halfPeriod > 0) {
+      runMotor = true;
+      isMovingForward = true;
+      makeHalfMove(isMovingForward, halfPeriod/2000.0);
+      Serial.print("========= period is: ");
+      Serial.println(halfPeriod);
+      WiFi.mode(WIFI_OFF);
+    }
   } else {
     detect = false;
     digitalWrite(LED_BUILTIN, HIGH);
@@ -131,38 +169,49 @@ float calculateAccelerationForTrapezoidalAtMaxSpeed(long steps, float totalTime,
   return maxSpeed * maxSpeed / steps;
 }
 
-bool isMovingForward = true; // Флаг направления
+
 
 void makeHalfMove(bool up, float desiredTime) {
+  static bool firstRun = true;
   // Параметры движения
-  long targetSteps = 500;
-  float maxMotorSpeed = 2000;  // Максимальная скорость двигателя
+  long targetSteps = 600;
+  float maxMotorSpeed = 5000;  // Максимальная скорость двигателя
+  desiredTime *= 1.035;
 
   // Расчет для треугольного профиля
   float acceleration = calculateMaxAccelerationForTriangularProfile(targetSteps, desiredTime);
   float peakSpeed = calculatePeakSpeedForTriangularProfile(targetSteps, desiredTime);
 
-  Serial.println("\nДля треугольного профиля:");
-  Serial.print("Ускорение: ");
-  Serial.print(acceleration);
-  Serial.println(" шагов/сек²");
-  Serial.print("Пиковая скорость: ");
-  Serial.print(peakSpeed);
-  Serial.println(" шагов/сек");
+  // Serial.println("\nДля треугольного профиля с временем ");
+  // Serial.println(desiredTime);
+  // Serial.print("Ускорение: ");
+  // Serial.print(acceleration);
+  // Serial.println(" шагов/сек²");
+  // Serial.print("Пиковая скорость: ");
+  // Serial.print(peakSpeed);
+  // Serial.println(" шагов/сек");
 
   // Проверка ограничений двигателя
   float safeAcceleration = calculateSafeAcceleration(targetSteps, desiredTime, maxMotorSpeed);
 
-  Serial.println("\nС учетом ограничений двигателя:");
-  Serial.print("Безопасное ускорение: ");
-  Serial.print(safeAcceleration);
-  Serial.println(" шагов/сек²");
+  // Serial.println("\nС учетом ограничений двигателя:");
+  // Serial.print("Безопасное ускорение: ");
+  // Serial.print(safeAcceleration);
+  // Serial.print("Шагов: ");
+  // Serial.print(targetSteps);
+  // Serial.println(" шагов/сек²");
 
   // Настройка двигателя
   stepper.setMaxSpeed(maxMotorSpeed);
   stepper.setAcceleration(safeAcceleration);
-  stepper.moveTo(targetSteps * (up ? 1 : -1));
+  if (firstRun) {
+    stepper.setCurrentPosition(targetSteps/2);
+    firstRun = false;
+  }
+  
+  stepper.moveTo(targetSteps * (up ? 1 : 0));
 }
+
 
 // the setup function runs once when you press reset or power the board
 void setup() {
@@ -190,12 +239,12 @@ void setup() {
 
   esp_now_register_recv_cb(ReceiveCallback);
 
-  makeHalfMove(isMovingForward, 1);
+  //makeHalfMove(isMovingForward, hp);
 }
 
 
+int prevMotorTime = millis();
 
-int i = 0;
 // the loop function runs over and over again forever
 void loop() {
   // digitalWrite(LED_BUILTIN, HIGH);  // turn the LED on (HIGH is the voltage level)
@@ -204,19 +253,30 @@ void loop() {
 
   //Serial.println(i++);
   //Serial.println(WiFi.macAddress());
-  if (!digitalRead(buttonPin0)) {
-    Serial.println("FWD");
-    stepper.move(1500);
-  }
+  // if (!digitalRead(buttonPin0)) {
+  //   hp += 0.001;
+  //   Serial.println(hp * 1000);
+  //   delay(100);
+  // }
 
-  if (!digitalRead(buttonPin1)) {
-    stepper.move(-1500);
-    Serial.println("FWD");
-  }
+  // if (!digitalRead(buttonPin1)) {
+  //   hp -= 0.001;
+  //   Serial.println(hp * 1000);
+  //   delay(100);
+  // }
 
-  if (stepper.distanceToGo() == 0) {
-    makeHalfMove(!isMovingForward, 0.5);
-    isMovingForward = !isMovingForward;  // Меняем флаг
+  if (runMotor) {
+    if (stepper.distanceToGo() == 0) {
+      Serial.print("Change direction: ");
+      Serial.print(millis() - prevMotorTime);
+      Serial.print(", period ");
+      Serial.println(halfPeriod/2);
+      prevMotorTime = millis();
+
+      //makeHalfMove(!isMovingForward, halfPeriod/2000.0);
+      makeHalfMove(!isMovingForward, halfPeriod/2000.0);
+      isMovingForward = !isMovingForward;  // Меняем флаг
+    }
   }
 
   //Serial.println(".");

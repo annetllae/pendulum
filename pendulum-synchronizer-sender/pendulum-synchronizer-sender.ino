@@ -14,6 +14,7 @@ Adafruit_MPU6050 mpu;
 
 // REPLACE WITH RECEIVER MAC Address
 uint8_t broadcastAddress[] = { 0x08, 0x3A, 0x8D, 0xE3, 0x5A, 0x50 };
+int goSleepTimer = 0;
 
 // Callback when data is sent
 void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
@@ -21,7 +22,13 @@ void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
   if (sendStatus == 0) {
     Serial.println("success");
   } else {
-    Serial.println("fail");
+    Serial.println("x");
+    goSleepTimer++;
+    if (goSleepTimer > 1000) {
+      goSleepTimer = 0;
+      WiFi.mode(WIFI_OFF);
+      ESP.deepSleep(0);
+    }
   }
 }
 
